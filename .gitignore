@@ -1,0 +1,15 @@
+# Dependencies and Next.js build output
+node_modules/
+.next/
+.pnpm-store/
+*.tsbuildinfo
+
+# Local environment variables and secrets
+.env*.local
+
+# Local database files
+src/prisma/*.db
+src/prisma/*.db-journal
+
+# macOS
+.DS_Store
