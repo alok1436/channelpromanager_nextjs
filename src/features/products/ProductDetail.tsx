@@ -28,17 +28,26 @@ const ProductDetail = ({ productId }: { productId: number }) => {
   const { lang } = useParams<{ lang: string }>()
   const { data: session } = useSession()
   const [product, setProduct] = useState<Product | null>(null)
+  const [preferredLanguage, setPreferredLanguage] = useState('en')
   const [error, setError] = useState('')
   const canEdit = session?.user?.accountType === 'customer' || session?.user?.permissions.includes('products.update')
 
   useEffect(() => {
     getProduct(productId).then(setProduct).catch(caught => setError(caught instanceof Error ? caught.message : 'Product not found.'))
   }, [productId])
+  useEffect(() => {
+    fetch('/api/portal/product-language-settings').then(async response => {
+      if (!response.ok) return
+      const data = await response.json() as { language_codes: string[] }
+
+      if (data.language_codes[0]) setPreferredLanguage(data.language_codes[0])
+    })
+  }, [])
 
   if (error) return <Alert severity='error'>{error}</Alert>
   if (!product) return <Card><CardContent className='flex items-center justify-center gap-3 p-12'><CircularProgress size={24} /><Typography>Loading product…</Typography></CardContent></Card>
   const primary = product.images.find(image => image.is_primary) ?? product.images[0]
-  const mainName = product.translations.find(item => item.language_code === 'en')?.name ?? product.translations[0]?.name ?? 'Unnamed product'
+  const mainName = product.translations.find(item => item.language_code === preferredLanguage)?.name ?? product.translations[0]?.name ?? 'Unnamed product'
   const facts = [
     ['Brand', product.brand], ['Manufacturer', product.manufacturer], ['Company', product.company?.name],
     ['Condition', product.condition], ['Product type', product.product_type], ['MPN', product.mpn],

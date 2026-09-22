@@ -3,6 +3,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 
 import Alert from '@mui/material/Alert'
+import Avatar from '@mui/material/Avatar'
 import Button from '@mui/material/Button'
 import Card from '@mui/material/Card'
 import CardContent from '@mui/material/CardContent'
@@ -40,6 +41,14 @@ type PermissionGroup = {
   module: string
   name: string
   permissions: Array<{ id: number; code: string; name: string }>
+}
+
+const platformDescriptions: Record<string, string> = {
+  amazon: 'Everything from A to Z.',
+  ebay: 'Buy it, sell it, love it.',
+  otto: 'A trusted home for modern retail.',
+  cdiscount: 'French ecommerce made accessible.',
+  woocommerce: 'Commerce built on WordPress.'
 }
 
 const pageSize = 10
@@ -99,9 +108,13 @@ const getErrorMessage = async (response: Response) => {
   return `Request failed (${response.status})`
 }
 
-const displayValue = (value: unknown, key: string) => {
+const displayValue = (value: unknown, key: string, row: Row) => {
   if (key === 'is_active') return <Chip size='small' color={value ? 'success' : 'secondary'} label={value ? 'Active' : 'Inactive'} />
   if (key === 'has_login') return <Chip size='small' color={value ? 'info' : 'secondary'} label={value ? 'Enabled' : 'Not set'} />
+  if (key === 'logo_url') return value
+    ? <Avatar src={String(value)} alt={`${String(row.name ?? 'Platform')} logo`} variant='rounded' sx={{ width: 52, height: 52, '& img': { objectFit: 'contain' } }} />
+    : <Avatar variant='rounded' sx={{ width: 52, height: 52 }}><i className='tabler-photo-off' /></Avatar>
+  if (key === 'description' && !value) return platformDescriptions[String(row.code ?? '').toLowerCase()] ?? '—'
   if (Array.isArray(value)) return value.length ? value.map(item => typeof item === 'object' ? String((item as Row).name) : String(item)).join(', ') : '—'
 
   return value === null || value === undefined || value === '' ? '—' : String(value)
@@ -212,7 +225,10 @@ const SuperAdminCrud = ({ resource }: { resource: AdminResource }) => {
       }
 
       setEditingRow(editableRow)
-      setForm(Object.fromEntries(config.fields.map(field => [field.key, editableRow[field.key] ?? config.defaults[field.key]])))
+      setForm({
+        ...Object.fromEntries(config.fields.map(field => [field.key, field.type === 'image' ? null : editableRow[field.key] ?? config.defaults[field.key]])),
+        _logoPreview: editableRow.logo_url ?? null
+      })
       setFormOpen(true)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : `Unable to load ${config.singular.toLowerCase()}`)
@@ -231,10 +247,28 @@ const SuperAdminCrud = ({ resource }: { resource: AdminResource }) => {
     setError('')
 
     try {
+      const hasImage = config.fields.some(field => field.type === 'image')
+      let body: BodyInit
+      let headers: HeadersInit | undefined
+
+      if (hasImage) {
+        const payload = new FormData()
+
+        config.fields.forEach(field => {
+          const value = form[field.key]
+
+          if (field.type === 'image') {
+            if (value instanceof File) payload.append(field.key, value)
+          } else if (value !== undefined && value !== null) payload.append(field.key, String(value))
+        })
+        body = payload
+      } else {
+        headers = { 'Content-Type': 'application/json' }
+        body = JSON.stringify(form)
+      }
+
       const response = await fetch(`/api/super-admin/${resource}${editingRow ? `/${editingRow.id}` : ''}`, {
-        method: editingRow ? 'PATCH' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form)
+        method: editingRow ? 'PATCH' : 'POST', headers, body
       })
 
       if (!response.ok) throw new Error(await getErrorMessage(response))
@@ -276,6 +310,54 @@ const SuperAdminCrud = ({ resource }: { resource: AdminResource }) => {
 
     if (field.type === 'boolean') {
       return <FormControlLabel key={field.key} control={<Switch checked={Boolean(value)} onChange={event => update(event.target.checked)} />} label={field.label} />
+    }
+
+    if (field.type === 'image') {
+      const preview = value instanceof File ? URL.createObjectURL(value) : String(form._logoPreview ?? '')
+
+      const chooseImage = (file: File | null) => {
+        if (!file) return
+        if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+          setError('Logo must be a PNG, JPG, or WebP image.')
+          return
+        }
+        if (file.size > 2 * 1024 * 1024) {
+          setError('Logo must be 2 MB or smaller.')
+          return
+        }
+
+        const image = new Image()
+        const objectUrl = URL.createObjectURL(file)
+
+        image.onload = () => {
+          URL.revokeObjectURL(objectUrl)
+          if (image.width !== 200 || image.height !== 200) {
+            setError(`Logo must be exactly 200 × 200 pixels. Selected image is ${image.width} × ${image.height}.`)
+            return
+          }
+          setError('')
+          update(file)
+        }
+        image.onerror = () => {
+          URL.revokeObjectURL(objectUrl)
+          setError('The selected logo could not be read. Please choose another image.')
+        }
+        image.src = objectUrl
+      }
+
+      return (
+        <div key={field.key} className='flex items-center gap-4 rounded-xl border border-dashed border-primary bg-primaryLighter p-4'>
+          <Avatar src={preview || undefined} variant='rounded' sx={{ width: 96, height: 96, '& img': { objectFit: 'contain' } }}><i className='tabler-photo text-3xl' /></Avatar>
+          <div className='flex flex-col items-start gap-2'>
+            <Typography fontWeight={600}>Platform logo</Typography>
+            <Typography variant='body2' color='text.secondary'>PNG, JPG or WebP. Exactly 200 × 200 pixels, maximum 2 MB.</Typography>
+            <Button component='label' variant='tonal' size='small' startIcon={<i className='tabler-upload' />}>
+              Choose logo
+              <input hidden type='file' accept='image/png,image/jpeg,image/webp' onChange={event => chooseImage(event.target.files?.[0] ?? null)} />
+            </Button>
+          </div>
+        </div>
+      )
     }
 
     if (resource === 'roles' && field.key === 'permissions') {
@@ -413,7 +495,7 @@ const SuperAdminCrud = ({ resource }: { resource: AdminResource }) => {
                   </TableRow>
                 )}
                 <TableRow hover>
-                  {config.columns.map(column => <TableCell key={column.key}>{displayValue(row[column.key], column.key)}</TableCell>)}
+                  {config.columns.map(column => <TableCell key={column.key}>{displayValue(row[column.key], column.key, row)}</TableCell>)}
                   <TableCell align='right'>
                     <IconButton aria-label={`Edit ${config.singular}`} onClick={() => void openEdit(row)}><i className='tabler-edit' /></IconButton>
                     <IconButton aria-label={`Delete ${config.singular}`} color='error' disabled={row.is_system_role} onClick={() => setDeleteRow(row)}><i className='tabler-trash' /></IconButton>

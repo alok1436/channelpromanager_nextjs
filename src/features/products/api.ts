@@ -66,3 +66,33 @@ export const deleteProductImage = (id: number, imageId: number) => request<void>
 export const reorderProductImages = (id: number, imageIds: number[]) => request<ProductImage[]>(`/${id}/images/reorder`, json('PUT', { image_ids: imageIds }))
 export const bulkProductStatus = (productIds: number[], status: string) => request<{ updated: number }>('/bulk/status', json('POST', { product_ids: productIds, status }))
 export const bulkArchiveProducts = (productIds: number[]) => request<{ updated: number }>('/bulk/archive', json('POST', { product_ids: productIds }))
+
+export type WooImportStatus = {
+  id: number
+  status: 'queued' | 'running' | 'completed' | 'failed'
+  imported: number
+  platform_products: number
+  skipped: number
+  image_failures: number
+  error: string
+  completed_at: string | null
+}
+
+export const startWooImport = (channelId: number, warehouseId: number, file: File, languageCode = 'en') => {
+  const body = new FormData()
+
+  body.set('warehouse_id', String(warehouseId))
+  body.set('language_code', languageCode)
+  body.set('file', file)
+  return fetch(`/api/portal/channels/${channelId}/woo-product-import`, { method: 'POST', body }).then(async response => {
+    if (!response.ok) throw await parseError(response)
+    return response.json() as Promise<WooImportStatus>
+  })
+}
+
+export const getWooImportStatus = async (channelId: number, importId: number) => {
+  const response = await fetch(`/api/portal/channels/${channelId}/woo-product-import/${importId}`, { cache: 'no-store' })
+
+  if (!response.ok) throw await parseError(response)
+  return response.json() as Promise<WooImportStatus>
+}

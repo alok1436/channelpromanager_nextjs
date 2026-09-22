@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import type { ProductPayload } from './types'
-import { buildProductQuery, canProductAction, validateProductForm } from './utils'
+import { buildProductQuery, canProductAction, parseProductCsv, validateProductForm, wooCommerceRowToProduct } from './utils'
 
 const validProduct = (): ProductPayload => ({
   company_id: null, sku: 'SKU-1', brand: '', manufacturer: '', mpn: '', ean: '', upc: '', isbn: '', gtin: '',
@@ -26,4 +26,16 @@ test('product form validation covers SKU, translation, variants, and negative va
   assert.equal(validateProductForm({ ...validProduct(), sku: '' }), 'SKU is required.')
   assert.match(validateProductForm({ ...validProduct(), translations: [] }), /translation/)
   assert.match(validateProductForm({ ...validProduct(), standard_sale_price: '-1' }), /cannot be negative/)
+})
+
+test('WooCommerce CSV supports quoted values and maps required product fields', () => {
+  const rows = parseProductCsv('SKU,Name,Description,Regular price,Published\nABC-1,"Blue, Large","A useful product",19.90,1')
+  const product = wooCommerceRowToProduct(rows[0], 7)
+
+  assert.equal(rows.length, 1)
+  assert.equal(product.sku, 'ABC-1')
+  assert.equal(product.translations[0].name, 'Blue, Large')
+  assert.equal(product.standard_sale_price, '19.90')
+  assert.equal(product.company_id, 7)
+  assert.equal(product.status, 'active')
 })

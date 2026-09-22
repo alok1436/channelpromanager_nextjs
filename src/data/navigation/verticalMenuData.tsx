@@ -113,12 +113,6 @@ const verticalMenuData = (dictionary: Awaited<ReturnType<typeof getDictionary>>)
               {
                 label: dictionary['navigation'].list,
                 href: '/apps/ecommerce/orders/list'
-              },
-              {
-                label: dictionary['navigation'].details,
-                href: '/apps/ecommerce/orders/details/5434',
-                exactMatch: false,
-                activeUrl: '/apps/ecommerce/orders/details'
               }
             ]
           },

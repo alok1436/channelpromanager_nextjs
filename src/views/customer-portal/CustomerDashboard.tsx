@@ -100,6 +100,16 @@ const CustomerDashboard = () => {
       </Card>
 
       {error && <Alert severity='error'>{error}</Alert>}
+      {data?.companyCount === 0 && (
+        <Alert
+          severity='warning'
+          variant='outlined'
+          action={<Button color='warning' variant='contained' size='small' startIcon={<i className='tabler-building-plus' />} onClick={() => router.push(`/${lang}/companies?create=true`)}>Add Company</Button>}
+        >
+          <Typography fontWeight={600}>Please create the profile of at least one company.</Typography>
+          <Typography variant='body2'>A company profile is required before you can manage products, warehouses, and sales channels.</Typography>
+        </Alert>
+      )}
 
       <Grid container spacing={6}>
         {[

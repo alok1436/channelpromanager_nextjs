@@ -27,6 +27,7 @@ import TableHead from '@mui/material/TableHead'
 import TableRow from '@mui/material/TableRow'
 import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
+import { useSearchParams } from 'next/navigation'
 
 import CustomTextField from '@core/components/mui/TextField'
 
@@ -67,15 +68,30 @@ const emptyForm: CompanyForm = {
 }
 
 const readError = async (response: Response) => {
-  const body = await response.json().catch(() => null)
+  const text = await response.text()
+  let body: unknown = null
 
-  if (body?.detail) return String(body.detail)
-  if (body && typeof body === 'object') return Object.entries(body).map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`).join(' · ')
+  try {
+    body = text ? JSON.parse(text) : null
+  } catch {
+    return text.trim() || `Request failed (${response.status})`
+  }
+
+  const flatten = (value: unknown, path = ''): string[] => {
+    if (Array.isArray(value)) return value.flatMap(item => flatten(item, path))
+    if (value && typeof value === 'object') return Object.entries(value).flatMap(([key, item]) => flatten(item, path ? `${path}.${key}` : key))
+
+    return [`${path ? `${path}: ` : ''}${String(value)}`]
+  }
+
+  if (body && typeof body === 'object' && 'detail' in body) return String((body as { detail: unknown }).detail)
+  if (body && typeof body === 'object') return flatten(body).join(' · ')
 
   return `Request failed (${response.status})`
 }
 
 const CompanyManager = () => {
+  const searchParams = useSearchParams()
   const [companies, setCompanies] = useState<Company[]>([])
   const [count, setCount] = useState(0)
   const [page, setPage] = useState(1)
@@ -117,8 +133,28 @@ const CompanyManager = () => {
     void loadCompanies()
   }, [loadCompanies])
 
+  useEffect(() => {
+    if (searchParams.get('create') === 'true') openCreate()
+    // Open only when the route explicitly requests the create form.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams])
+
   const update = <Key extends keyof CompanyForm>(key: Key, value: CompanyForm[Key]) => {
     setForm(current => ({ ...current, [key]: value }))
+  }
+
+  const chooseLogo = (file: File | null) => {
+    if (!file) return
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+      setError('Logo: choose a PNG, JPG, or WebP image.')
+      return
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setError(`Logo: ${file.name} is ${(file.size / 1024 / 1024).toFixed(1)} MB. The maximum size is 5 MB.`)
+      return
+    }
+    setError('')
+    update('logo', file)
   }
 
   const openCreate = () => {
@@ -243,7 +279,7 @@ const CompanyManager = () => {
                 <Grid size={{ xs: 12 }}>
                   <div className='flex flex-col items-center gap-4 rounded-xl border border-dashed border-primary bg-primaryLighter p-5 sm:flex-row'>
                     <Avatar src={logoPreview ?? undefined} variant='rounded' className='is-20 bs-20'>{!logoPreview && <i className='tabler-photo text-3xl' />}</Avatar>
-                    <div className='flex flex-1 flex-col items-center gap-2 text-center sm:items-start sm:text-start'><Typography fontWeight={600}>Company logo</Typography><Typography variant='body2' color='text.secondary'>Upload PNG, JPG or WebP up to 5 MB.</Typography><Button component='label' size='small' variant='tonal' startIcon={<i className='tabler-upload' />}>Choose image<input hidden type='file' accept='image/png,image/jpeg,image/webp,image/gif' onChange={event => update('logo', event.target.files?.[0] ?? null)} /></Button></div>
+                    <div className='flex flex-1 flex-col items-center gap-2 text-center sm:items-start sm:text-start'><Typography fontWeight={600}>Company logo</Typography><Typography variant='body2' color='text.secondary'>Upload PNG, JPG or WebP up to 5 MB. Invalid files are explained before upload.</Typography><Button component='label' size='small' variant='tonal' startIcon={<i className='tabler-upload' />}>Choose image<input hidden type='file' accept='image/png,image/jpeg,image/webp' onChange={event => chooseLogo(event.target.files?.[0] ?? null)} /></Button>{form.logo && <Typography variant='caption' color='success.main'>{form.logo.name} ({(form.logo.size / 1024 / 1024).toFixed(2)} MB)</Typography>}</div>
                   </div>
                 </Grid>
               </Grid>

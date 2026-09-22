@@ -24,7 +24,7 @@ const proxy = async (request: Request, context: { params: Promise<{ path: string
 
   const sourceUrl = new URL(request.url)
   const endpoint = `${process.env.DJANGO_API_URL ?? 'http://localhost:8000/api/v1'}/${resource}/${id ? `${id}/` : ''}${sourceUrl.search}`
-  const body = ['GET', 'HEAD'].includes(request.method) ? undefined : await request.text()
+  const body = ['GET', 'HEAD'].includes(request.method) ? undefined : await request.arrayBuffer()
   const fetchBackend = (accessToken: string) => fetch(endpoint, {
     method: request.method,
     headers: {

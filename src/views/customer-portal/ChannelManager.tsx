@@ -75,7 +75,8 @@ const credentialFields: Record<string, Array<{ key: string; label: string; type?
     { key: 'consumer_key', label: 'Consumer key', type: 'password' },
     { key: 'consumer_secret', label: 'Consumer secret', type: 'password' }
   ],
-  otto: [{ key: 'client_id', label: 'Client ID' }, { key: 'client_secret', label: 'Client secret', type: 'password' }]
+  otto: [{ key: 'client_id', label: 'Client ID' }, { key: 'client_secret', label: 'Client secret', type: 'password' }],
+  kaufland: [{ key: 'client_key', label: 'Shop client key' }, { key: 'client_secret', label: 'Shop secret key', type: 'password' }]
 }
 
 const normalizeList = <Item,>(payload: unknown): { count: number; results: Item[] } => {

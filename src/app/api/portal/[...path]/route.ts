@@ -11,6 +11,7 @@ const isAllowedPath = (path: string[]) => {
 
   if (simpleResources.has(resource)) return path.length <= 2 && (!id || /^\d+$/.test(id))
   if (resource === 'channel-settings') return path.length === 1
+  if (resource === 'product-language-settings') return path.length === 1
   if (resource === 'platforms') return path.length === 1 || (path.length === 3 && Boolean(id) && action === 'marketplaces')
   if (resource === 'products') {
     if (path.length === 1) return true
@@ -28,8 +29,8 @@ const isAllowedPath = (path: string[]) => {
   if (!id || !/^\d+$/.test(id)) return false
   if (path.length === 2) return true
 
-  return (path.length === 3 && ['disconnect', 'credentials', 'marketplaces', 'authorize'].includes(action)) ||
-    (path.length === 4 && action === 'credentials' && child === 'status')
+  return (path.length === 3 && ['disconnect', 'credentials', 'marketplaces', 'authorize', 'woo-product-import', 'sync-orders'].includes(action)) ||
+    (path.length === 4 && ((action === 'credentials' && child === 'status') || (action === 'woo-product-import' && /^\d+$/.test(child))))
 }
 
 const proxy = async (request: Request, context: { params: Promise<{ path: string[] }> }) => {

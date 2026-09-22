@@ -31,15 +31,28 @@ import Typography from '@mui/material/Typography'
 import { useParams, usePathname, useRouter } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 
-import { archiveProduct, bulkArchiveProducts, bulkProductStatus, duplicateProduct, getProducts, restoreProduct } from './api'
+import { archiveProduct, bulkArchiveProducts, bulkProductStatus, duplicateProduct, getProducts, getWooImportStatus, restoreProduct, startWooImport } from './api'
+import type { WooImportStatus } from './api'
 import type { ProductCondition, ProductFilters, ProductListItem, ProductStatus } from './types'
 import { buildProductQuery, canProductAction } from './utils'
 
 type Company = { id: number; name: string }
 type CompanyPayload = { results?: Company[] }
+type WooChannel = { id: number; name: string; platform: { code: string }; company: Company }
+type Warehouse = { id: number; name: string; company: number | null }
+type ListPayload<T> = { results?: T[] }
 
 const statuses: ProductStatus[] = ['draft', 'active', 'inactive', 'discontinued', 'archived']
 const conditions: ProductCondition[] = ['new', 'used', 'refurbished']
+const importLanguages = [
+  { code: 'it', name: 'Italian' },
+  { code: 'en', name: 'English' },
+  { code: 'de', name: 'German' },
+  { code: 'fr', name: 'French' },
+  { code: 'es', name: 'Spanish' },
+  { code: 'nl', name: 'Dutch' }
+]
+type ImportProvider = 'woocommerce' | 'ebay' | 'amazon'
 const statusColor = (status: ProductStatus): 'success' | 'warning' | 'secondary' | 'error' | 'info' => ({
   active: 'success', draft: 'warning', inactive: 'secondary', discontinued: 'error', archived: 'info'
 } as const)[status]
@@ -51,6 +64,7 @@ const ProductList = () => {
   const { data: session } = useSession()
   const [products, setProducts] = useState<ProductListItem[]>([])
   const [companies, setCompanies] = useState<Company[]>([])
+  const [enabledLanguages, setEnabledLanguages] = useState<string[]>(['en'])
   const [count, setCount] = useState(0)
   const [filters, setFilters] = useState<ProductFilters>({ page: 1, page_size: 10, ordering: '-updated_at', language: 'en' })
   const [searchInput, setSearchInput] = useState('')
@@ -61,6 +75,15 @@ const ProductList = () => {
   const [working, setWorking] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [importProvider, setImportProvider] = useState<ImportProvider | null>(null)
+  const [importFile, setImportFile] = useState<File | null>(null)
+  const [wooChannels, setWooChannels] = useState<WooChannel[]>([])
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([])
+  const [importChannelId, setImportChannelId] = useState<number | ''>('')
+  const [importWarehouseId, setImportWarehouseId] = useState<number | ''>('')
+  const [importLanguageCode, setImportLanguageCode] = useState('it')
+  const [importJob, setImportJob] = useState<WooImportStatus | null>(null)
+  const [importError, setImportError] = useState('')
 
   const can = (code: string) => canProductAction(session?.user?.accountType, session?.user?.permissions, code)
 
@@ -92,6 +115,57 @@ const ProductList = () => {
     })
   }, [])
   useEffect(() => {
+    fetch('/api/portal/product-language-settings').then(async response => {
+      if (!response.ok) return
+      const data = await response.json() as { language_codes: string[] }
+
+      if (data.language_codes.length) {
+        setEnabledLanguages(data.language_codes)
+        setFilters(current => ({ ...current, language: data.language_codes[0], page: 1 }))
+      }
+    })
+  }, [])
+  useEffect(() => {
+    if (importProvider !== 'woocommerce') return
+    const loadOptions = async () => {
+      try {
+        const [channelsResponse, warehousesResponse] = await Promise.all([
+          fetch('/api/portal/channels?page_size=100'), fetch('/api/portal/warehouses?page_size=100')
+        ])
+
+        if (!channelsResponse.ok || !warehousesResponse.ok) throw new Error('Unable to load channels or warehouses')
+        const channelsData = await channelsResponse.json() as ListPayload<WooChannel> | WooChannel[]
+        const warehousesData = await warehousesResponse.json() as ListPayload<Warehouse> | Warehouse[]
+
+        setWooChannels((Array.isArray(channelsData) ? channelsData : channelsData.results ?? []).filter(channel => channel.platform.code === 'woocommerce'))
+        setWarehouses(Array.isArray(warehousesData) ? warehousesData : warehousesData.results ?? [])
+      } catch (caught) {
+        setImportError(caught instanceof Error ? caught.message : 'Unable to load import options')
+      }
+    }
+
+    void loadOptions()
+  }, [importProvider])
+  useEffect(() => {
+    if (!importJob || !importChannelId || !['queued', 'running'].includes(importJob.status)) return
+    const timer = window.setInterval(async () => {
+      try {
+        const job = await getWooImportStatus(Number(importChannelId), importJob.id)
+
+        setImportJob(job)
+        if (job.status === 'completed') {
+          setNotice(`${job.imported} products imported; ${job.skipped} skipped.`)
+          void load()
+        }
+        if (job.status === 'failed') setImportError(job.error || 'Import failed')
+      } catch (caught) {
+        setImportError(caught instanceof Error ? caught.message : 'Unable to check import status')
+      }
+    }, 3000)
+
+    return () => window.clearInterval(timer)
+  }, [importJob, importChannelId, load])
+  useEffect(() => {
     const timeout = window.setTimeout(() => setFilters(current => ({ ...current, search: searchInput, page: 1 })), 400)
 
     return () => window.clearTimeout(timeout)
@@ -114,12 +188,38 @@ const ProductList = () => {
 
   const clearFilters = () => {
     setSearchInput('')
-    setFilters({ page: 1, page_size: 10, ordering: '-updated_at', language: 'en' })
+    setFilters({ page: 1, page_size: 10, ordering: '-updated_at', language: enabledLanguages[0] ?? 'en' })
+  }
+
+  const openImport = (provider: ImportProvider) => {
+    setImportProvider(provider)
+    setImportFile(null)
+    setImportChannelId('')
+    setImportWarehouseId('')
+    setImportLanguageCode('it')
+    setImportJob(null)
+    setImportError('')
+  }
+
+  const importWooCommerce = async () => {
+    if (!importFile) return setImportError('Choose a WooCommerce CSV file.')
+    if (!importChannelId) return setImportError('Choose a WooCommerce channel.')
+    if (!importWarehouseId) return setImportError('Choose a warehouse.')
+
+    setWorking(true)
+    setImportError('')
+    try {
+      setImportJob(await startWooImport(Number(importChannelId), Number(importWarehouseId), importFile, importLanguageCode))
+    } catch (caught) {
+      setImportError(caught instanceof Error ? caught.message : 'Unable to import WooCommerce products')
+    } finally {
+      setWorking(false)
+    }
   }
 
   return <div className='flex flex-col gap-6'>
-    <Card><CardHeader avatar={<i className='tabler-package text-2xl' />} title='Products' subheader='Manage multilingual catalog products and variants' action={can('products.create') && <Button variant='contained' startIcon={<i className='tabler-plus' />} onClick={() => router.push(`/${lang}/products/create`)}>Add Product</Button>} />
-      <CardContent className='flex flex-wrap items-center gap-3'><TextField className='min-is-[260px] flex-1' size='small' value={searchInput} onChange={event => setSearchInput(event.target.value)} placeholder='Search by SKU, EAN, name, brand…' /><Button variant={showFilters ? 'contained' : 'tonal'} startIcon={<i className='tabler-filter' />} onClick={() => setShowFilters(value => !value)}>Filters</Button><TextField select size='small' label='Sort' value={filters.ordering} onChange={event => setFilters(current => ({ ...current, ordering: event.target.value, page: 1 }))}><MenuItem value='-updated_at'>Recently updated</MenuItem><MenuItem value='sku'>SKU A–Z</MenuItem><MenuItem value='-created_at'>Newest</MenuItem><MenuItem value='standard_sale_price'>Price low–high</MenuItem><MenuItem value='-standard_sale_price'>Price high–low</MenuItem></TextField></CardContent>
+    <Card><CardHeader avatar={<i className='tabler-package text-2xl' />} title='Products' subheader='Manage multilingual catalog products and variants' action={can('products.create') && <div className='flex flex-wrap justify-end gap-2'><Button variant='tonal' startIcon={<i className='tabler-brand-wordpress' />} onClick={() => openImport('woocommerce')}>Import from WooCommerce</Button><Button variant='tonal' startIcon={<i className='tabler-shopping-bag' />} onClick={() => openImport('ebay')}>Import from eBay</Button><Button variant='tonal' startIcon={<i className='tabler-brand-amazon' />} onClick={() => openImport('amazon')}>Import from Amazon</Button><Button variant='contained' startIcon={<i className='tabler-plus' />} onClick={() => router.push(`/${lang}/products/create`)}>Add Product</Button></div>} />
+      <CardContent className='flex flex-wrap items-center gap-3'><TextField className='min-is-[260px] flex-1' size='small' value={searchInput} onChange={event => setSearchInput(event.target.value)} placeholder='Search by SKU, EAN, name, brand…' /><TextField select size='small' label='Language' value={filters.language ?? enabledLanguages[0] ?? 'en'} onChange={event => setFilters(current => ({ ...current, language: event.target.value, page: 1 }))}>{enabledLanguages.map(code => <MenuItem key={code} value={code}>{code}</MenuItem>)}</TextField><Button variant={showFilters ? 'contained' : 'tonal'} startIcon={<i className='tabler-filter' />} onClick={() => setShowFilters(value => !value)}>Filters</Button><TextField select size='small' label='Sort' value={filters.ordering} onChange={event => setFilters(current => ({ ...current, ordering: event.target.value, page: 1 }))}><MenuItem value='-updated_at'>Recently updated</MenuItem><MenuItem value='sku'>SKU A–Z</MenuItem><MenuItem value='-created_at'>Newest</MenuItem><MenuItem value='standard_sale_price'>Price low–high</MenuItem><MenuItem value='-standard_sale_price'>Price high–low</MenuItem></TextField></CardContent>
       {showFilters && <CardContent className='border-bs border-solid border-divider'><Grid container spacing={4}><Grid size={{ xs: 12, sm: 6, md: 3 }}><TextField select fullWidth size='small' label='Company' value={filters.company_id ?? ''} onChange={event => setFilters(current => ({ ...current, company_id: Number(event.target.value) || '', page: 1 }))}><MenuItem value=''>All companies</MenuItem>{companies.map(company => <MenuItem key={company.id} value={company.id}>{company.name}</MenuItem>)}</TextField></Grid><Grid size={{ xs: 12, sm: 6, md: 2 }}><TextField select fullWidth size='small' label='Status' value={filters.status ?? ''} onChange={event => setFilters(current => ({ ...current, status: event.target.value as ProductStatus | '', page: 1 }))}><MenuItem value=''>All statuses</MenuItem>{statuses.map(value => <MenuItem key={value} value={value}>{value}</MenuItem>)}</TextField></Grid><Grid size={{ xs: 12, sm: 6, md: 2 }}><TextField select fullWidth size='small' label='Condition' value={filters.condition ?? ''} onChange={event => setFilters(current => ({ ...current, condition: event.target.value as ProductCondition | '', page: 1 }))}><MenuItem value=''>All conditions</MenuItem>{conditions.map(value => <MenuItem key={value} value={value}>{value}</MenuItem>)}</TextField></Grid><Grid size={{ xs: 12, sm: 6, md: 2 }}><TextField fullWidth size='small' label='Brand' value={filters.brand ?? ''} onChange={event => setFilters(current => ({ ...current, brand: event.target.value, page: 1 }))} /></Grid><Grid size={{ xs: 12, sm: 6, md: 2 }}><TextField fullWidth size='small' label='Product type' value={filters.product_type ?? ''} onChange={event => setFilters(current => ({ ...current, product_type: event.target.value, page: 1 }))} /></Grid><Grid size={{ xs: 12, md: 1 }}><Button fullWidth color='secondary' onClick={clearFilters}>Clear</Button></Grid></Grid></CardContent>}
       {selected.length > 0 && <CardContent className='flex flex-wrap items-center gap-3 bg-actionHover'><Typography fontWeight={600}>{selected.length} selected</Typography>{can('products.update') && <TextField select size='small' label='Change status' value='' onChange={event => void mutate(() => bulkProductStatus(selected, event.target.value), 'Product statuses updated.')}><MenuItem value='' disabled>Select</MenuItem>{statuses.filter(item => item !== 'archived').map(item => <MenuItem key={item} value={item}>{item}</MenuItem>)}</TextField>}{can('products.delete') && <Button color='error' variant='tonal' startIcon={<i className='tabler-archive' />} onClick={() => setConfirmArchive('bulk')}>Archive selected</Button>}</CardContent>}
       {error && <Alert severity='error' className='mx-6 mb-4'>{error}</Alert>}
@@ -129,6 +229,26 @@ const ProductList = () => {
       </TableBody></Table></TableContainer>{count > 10 && <CardContent className='flex justify-end'><Pagination count={Math.ceil(count / 10)} page={Number(filters.page ?? 1)} onChange={(_, page) => setFilters(current => ({ ...current, page }))} color='primary' /></CardContent>}
     </Card>
     <Dialog open={Boolean(confirmArchive)} onClose={() => !working && setConfirmArchive(null)} fullWidth maxWidth='xs'><DialogTitle>Archive product?</DialogTitle><DialogContent><Typography>{confirmArchive === 'bulk' ? `Archive ${selected.length} selected products?` : `Archive ${confirmArchive?.sku}?`} Products remain available for history and can be restored.</Typography></DialogContent><DialogActions><Button color='secondary' onClick={() => setConfirmArchive(null)}>Cancel</Button><Button variant='contained' color='error' disabled={working} onClick={() => { const operation = confirmArchive === 'bulk' ? () => bulkArchiveProducts(selected) : () => archiveProduct((confirmArchive as ProductListItem).id); setConfirmArchive(null); void mutate(operation, 'Product archived.') }}>Archive</Button></DialogActions></Dialog>
+    <Dialog open={Boolean(importProvider)} onClose={() => !working && setImportProvider(null)} fullWidth maxWidth='sm'>
+      <DialogTitle>Import products from {importProvider === 'woocommerce' ? 'WooCommerce' : importProvider === 'ebay' ? 'eBay' : 'Amazon'}</DialogTitle>
+      <DialogContent className='flex flex-col gap-4 !pt-3'>
+        {importError && <Alert severity='error'>{importError}</Alert>}
+        {importProvider === 'woocommerce' ? <>
+          <Alert severity='info'>Export products from WooCommerce as CSV. Supported columns include SKU, Name, Description, Short description, Regular price, Sale price, Published, Brand, EAN/UPC/GTIN, Weight, Length, Width, and Height.</Alert>
+          <TextField select fullWidth required label='WooCommerce channel' value={importChannelId} disabled={Boolean(importJob)} onChange={event => { setImportChannelId(Number(event.target.value) || ''); setImportWarehouseId('') }}><MenuItem value=''>Select channel</MenuItem>{wooChannels.map(channel => <MenuItem key={channel.id} value={channel.id}>{channel.name} ({channel.company.name})</MenuItem>)}</TextField>
+          <TextField select fullWidth required label='Warehouse' value={importWarehouseId} disabled={Boolean(importJob)} onChange={event => setImportWarehouseId(Number(event.target.value) || '')}><MenuItem value=''>Select warehouse</MenuItem>{warehouses.filter(warehouse => !warehouse.company || warehouse.company === wooChannels.find(channel => channel.id === importChannelId)?.company.id).map(warehouse => <MenuItem key={warehouse.id} value={warehouse.id}>{warehouse.name}</MenuItem>)}</TextField>
+          <TextField select fullWidth required label='CSV content language' value={importLanguageCode} disabled={Boolean(importJob)} onChange={event => setImportLanguageCode(event.target.value)}>{importLanguages.map(language => <MenuItem key={language.code} value={language.code}>{language.name}</MenuItem>)}</TextField>
+          <Button component='label' variant='outlined' disabled={Boolean(importJob)} startIcon={<i className='tabler-file-type-csv' />}>{importFile ? importFile.name : 'Choose CSV file'}<input hidden type='file' accept='.csv,text/csv' onChange={event => { setImportFile(event.target.files?.[0] ?? null); setImportError('') }} /></Button>
+          <Typography variant='body2' color='text.secondary'>Product name, short description, and description will be saved under the selected language. Choose the language of the content inside the CSV.</Typography>
+          {importJob && <Alert severity={importJob.status === 'failed' ? 'error' : importJob.status === 'completed' ? 'success' : 'info'}>Import #{importJob.id}: {importJob.status}. Imported {importJob.imported}, linked {importJob.platform_products}, skipped {importJob.skipped}, image failures {importJob.image_failures}.</Alert>}
+          <Typography variant='body2' color='text.secondary'>The server imports the CSV in the background. Keep this dialog open to see its status.</Typography>
+        </> : <>
+          <Alert severity='warning'>Direct {importProvider === 'ebay' ? 'eBay' : 'Amazon'} catalog import requires a connected and authorized sales channel. The current backend supports channel authorization but does not yet expose a product-import endpoint.</Alert>
+          <Typography>Connect the provider first. When the catalog-sync API is available, this button can import listings without asking for credentials again.</Typography>
+        </>}
+      </DialogContent>
+      <DialogActions><Button color='secondary' onClick={() => setImportProvider(null)} disabled={working}>Close</Button>{importProvider === 'woocommerce' ? <Button variant='contained' disabled={working || Boolean(importJob)} onClick={() => void importWooCommerce()}>{working ? 'Uploading…' : 'Import Products'}</Button> : <Button variant='contained' onClick={() => router.push(`/${lang}/channels`)}>Manage Channels</Button>}</DialogActions>
+    </Dialog>
     <Snackbar open={Boolean(notice)} autoHideDuration={3500} onClose={() => setNotice('')} message={notice} />
   </div>
 }

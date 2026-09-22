@@ -2,7 +2,7 @@ export type AdminResource = 'modules' | 'permissions' | 'roles' | 'customers' | 
 export type FieldConfig = {
   key: string
   label: string
-  type?: 'text' | 'email' | 'number' | 'date' | 'boolean' | 'select' | 'multiselect'
+  type?: 'text' | 'email' | 'number' | 'date' | 'boolean' | 'select' | 'multiselect' | 'image'
   required?: boolean
   optionsResource?: AdminResource
   optionLabel?: string
@@ -43,15 +43,15 @@ export const resourceConfigs: Record<AdminResource, ResourceConfig> = {
     icon: 'tabler-world-cog',
     columns: [
       { key: 'name', label: 'Name' }, { key: 'code', label: 'Code' },
-      { key: 'description', label: 'Description' }, { key: 'logo_url', label: 'Logo URL' },
+      { key: 'description', label: 'Description' }, { key: 'logo_url', label: 'Logo' },
       { key: 'is_active', label: 'Status' }
     ],
     fields: [
       { key: 'name', label: 'Name', required: true }, { key: 'code', label: 'Code', required: true },
-      { key: 'description', label: 'Description' }, { key: 'logo_url', label: 'Logo URL' },
+      { key: 'description', label: 'Description' }, { key: 'logo', label: 'Logo', type: 'image' },
       { key: 'is_active', label: 'Active', type: 'boolean' }
     ],
-    defaults: { name: '', code: '', description: '', logo_url: '', is_active: true }
+    defaults: { name: '', code: '', description: '', logo: null, is_active: true }
   },
   modules: {
     title: 'Modules',

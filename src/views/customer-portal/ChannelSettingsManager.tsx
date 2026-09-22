@@ -11,6 +11,7 @@ import CardContent from '@mui/material/CardContent'
 import Chip from '@mui/material/Chip'
 import Grid from '@mui/material/Grid'
 import InputAdornment from '@mui/material/InputAdornment'
+import MenuItem from '@mui/material/MenuItem'
 import Snackbar from '@mui/material/Snackbar'
 import Tab from '@mui/material/Tab'
 import Typography from '@mui/material/Typography'
@@ -66,6 +67,10 @@ const ChannelSettingsManager = () => {
   const [notice, setNotice] = useState('')
   const [moduleTab, setModuleTab] = useState('channels')
   const [providerTab, setProviderTab] = useState('amazon')
+  const [productLanguages, setProductLanguages] = useState<string[]>(['en'])
+  const [availableLanguages, setAvailableLanguages] = useState<string[]>([])
+  const [languageToAdd, setLanguageToAdd] = useState('')
+  const [savingLanguages, setSavingLanguages] = useState(false)
 
   useEffect(() => {
     fetch('/api/portal/channel-settings').then(async response => {
@@ -93,6 +98,37 @@ const ChannelSettingsManager = () => {
     }).catch(caught => setError(caught instanceof Error ? caught.message : 'Unable to load channel settings'))
       .finally(() => setLoading(false))
   }, [])
+
+  useEffect(() => {
+    fetch('/api/portal/product-language-settings').then(async response => {
+      if (!response.ok) throw new Error(await readError(response))
+      return response.json() as Promise<{ language_codes: string[]; available_languages: string[] }>
+    }).then(data => {
+      setProductLanguages(data.language_codes)
+      setAvailableLanguages(data.available_languages)
+    }).catch(caught => setError(caught instanceof Error ? caught.message : 'Unable to load product languages'))
+  }, [])
+
+  const saveProductLanguages = async (codes: string[]) => {
+    setSavingLanguages(true)
+    setError('')
+    try {
+      const response = await fetch('/api/portal/product-language-settings', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ language_codes: codes })
+      })
+
+      if (!response.ok) throw new Error(await readError(response))
+      const data = await response.json() as { language_codes: string[] }
+
+      setProductLanguages(data.language_codes)
+      setLanguageToAdd('')
+      setNotice('Product languages updated.')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to save product languages')
+    } finally {
+      setSavingLanguages(false)
+    }
+  }
 
   const save = async (provider: 'amazon' | 'ebay') => {
     const values = provider === 'amazon' ? amazon : ebay
@@ -143,7 +179,11 @@ const ChannelSettingsManager = () => {
         <Tab value='notifications' label='Notifications' icon={<i className='tabler-bell' />} iconPosition='start' />
         <Tab value='security' label='Security' icon={<i className='tabler-shield-lock' />} iconPosition='start' />
       </CustomTabList></CardContent></Card>
-      <TabPanel value='general' className='p-0'>{modulePlaceholder('General settings', 'This section is prepared for shared company defaults, localization, currency, and other application-wide preferences.', 'tabler-adjustments')}</TabPanel>
+      <TabPanel value='general' className='p-0'><Card><CardContent className='flex flex-col gap-5 p-6'>
+        <div><Typography variant='h5'>Product content languages</Typography><Typography color='text.secondary'>Enable the languages available when creating or editing product translations.</Typography></div>
+        <div className='flex flex-wrap gap-2'>{productLanguages.map(code => <Chip key={code} label={code} color='primary' variant='tonal' onDelete={productLanguages.length > 1 && !savingLanguages ? () => void saveProductLanguages(productLanguages.filter(value => value !== code)) : undefined} />)}</div>
+        <div className='flex flex-wrap items-center gap-3'><CustomTextField select size='small' label='Add language' value={languageToAdd} onChange={event => setLanguageToAdd(event.target.value)} className='min-is-[220px]'><MenuItem value=''>Select language</MenuItem>{availableLanguages.filter(code => !productLanguages.some(selected => selected.toLowerCase() === code.toLowerCase())).map(code => <MenuItem key={code} value={code}>{code}</MenuItem>)}</CustomTextField><Button variant='contained' disabled={!languageToAdd || savingLanguages} onClick={() => void saveProductLanguages([...productLanguages, languageToAdd])}>{savingLanguages ? 'Saving…' : 'Add language'}</Button></div>
+      </CardContent></Card></TabPanel>
       <TabPanel value='notifications' className='p-0'>{modulePlaceholder('Notification settings', 'Email, workflow, and event notification preferences can be added here as their APIs become available.', 'tabler-bell')}</TabPanel>
       <TabPanel value='security' className='p-0'>{modulePlaceholder('Security settings', 'Customer security policies and module-specific access preferences can be managed from this section.', 'tabler-shield-lock')}</TabPanel>
       <TabPanel value='channels' className='p-0'>
